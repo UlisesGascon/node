@@ -20,6 +20,7 @@
       "<(V8_ROOT)/src/builtins/array-find.tq",
       "<(V8_ROOT)/src/builtins/array-findindex.tq",
       "<(V8_ROOT)/src/builtins/array-foreach.tq",
+      "<(V8_ROOT)/src/builtins/array-isarray.tq",
       "<(V8_ROOT)/src/builtins/array-join.tq",
       "<(V8_ROOT)/src/builtins/array-lastindexof.tq",
       "<(V8_ROOT)/src/builtins/array-map.tq",
@@ -37,8 +38,8 @@
       "<(V8_ROOT)/src/builtins/bigint.tq",
       "<(V8_ROOT)/src/builtins/boolean.tq",
       "<(V8_ROOT)/src/builtins/collections.tq",
+      "<(V8_ROOT)/src/builtins/console.tq",
       "<(V8_ROOT)/src/builtins/data-view.tq",
-      "<(V8_ROOT)/src/builtins/extras-utils.tq",
       "<(V8_ROOT)/src/builtins/frames.tq",
       "<(V8_ROOT)/src/builtins/growable-fixed-array.tq",
       "<(V8_ROOT)/src/builtins/internal-coverage.tq",
@@ -78,6 +79,8 @@
       "<(V8_ROOT)/src/builtins/string-slice.tq",
       "<(V8_ROOT)/src/builtins/string-startswith.tq",
       "<(V8_ROOT)/src/builtins/string-substring.tq",
+      "<(V8_ROOT)/src/builtins/string-substr.tq",
+      "<(V8_ROOT)/src/builtins/symbol.tq",
       "<(V8_ROOT)/src/builtins/torque-internal.tq",
       "<(V8_ROOT)/src/builtins/typed-array-createtypedarray.tq",
       "<(V8_ROOT)/src/builtins/typed-array-every.tq",
@@ -268,11 +271,7 @@
         },
       ],
     },  # generate_bytecode_builtins_list
-
     {
-      # This rule delegates to either v8_snapshot or v8_nosnapshot depending on
-      # the current variables.
-      # The intention is to make the 'calling' rules a bit simpler.
       'target_name': 'v8_maybe_snapshot',
       'type': 'none',
       'toolsets': ['target'],
@@ -412,7 +411,6 @@
       ],
       'sources': [
         '<(V8_ROOT)/src/init/setup-isolate-deserialize.cc',
-        './extras-libraries.cc',
       ],
       'xcode_settings': {
         # V8 7.4 over macOS10.11 compatibility
@@ -433,27 +431,19 @@
               '--target_os=<(OS)',
               '--target_arch=<(v8_target_arch)',
               '--startup_src', '<(INTERMEDIATE_DIR)/snapshot.cc',
+              '--embedded_variant', 'Default',
+              '--embedded_src', '<(INTERMEDIATE_DIR)/embedded.S',
             ],
           },
           'inputs': [
             '<(mksnapshot_exec)',
           ],
-          'outputs': ["<(INTERMEDIATE_DIR)/snapshot.cc"],
+          'outputs': [
+            '<(INTERMEDIATE_DIR)/snapshot.cc',
+            '<(INTERMEDIATE_DIR)/embedded.S',
+          ],
           'process_outputs_as_sources': 1,
           'conditions': [
-            ['v8_enable_embedded_builtins', {
-              # In this case we use `embedded_variant "Default"`
-              # and `suffix = ''` for the template `embedded${suffix}.S`.
-              'outputs': ['<(INTERMEDIATE_DIR)/embedded.S'],
-              'variables': {
-                'mksnapshot_flags': [
-                  '--embedded_variant', 'Default',
-                  '--embedded_src', '<(INTERMEDIATE_DIR)/embedded.S',
-                ],
-              },
-            }, {
-               'outputs': ['<(V8_ROOT)/src/snapshot/embedded/embedded-empty.cc']
-             }],
             ['v8_random_seed', {
               'variables': {
                 'mksnapshot_flags': ['--random-seed', '<(v8_random_seed)'],
@@ -494,31 +484,6 @@
         },
       ],
     },  # v8_snapshot
-    {
-      'target_name': 'v8_nosnapshot',
-      'type': 'static_library',
-      'dependencies': [
-        # 'js2c_extras',  # Disabled for Node.js
-        'generate_bytecode_builtins_list',
-        'run_torque',
-        'v8_maybe_icu',
-      ],
-      'sources': [
-        './extras-libraries.cc',
-        '<(V8_ROOT)/src/snapshot/embedded/embedded-empty.cc',
-        '<(V8_ROOT)/src/snapshot/snapshot-empty.cc',
-      ],
-      'conditions': [
-        ['want_separate_host_toolset', {
-          'toolsets': ['host', 'target'],
-        }],
-        ['component=="shared_library"', {
-          'defines': [
-            'BUILDING_V8_SHARED',
-          ],
-        }],
-      ]
-    },  # v8_nosnapshot
     {
       'target_name': 'v8_version',
       'type': 'none',
@@ -1284,9 +1249,8 @@
         'v8_init',
         'v8_libbase',
         'v8_libplatform',
-        'v8_nosnapshot',
-        # "build/win:default_exe_manifest",
         'v8_maybe_icu',
+        # "build/win:default_exe_manifest",
       ],
       'sources': [
         '<!@pymod_do_main(GN-scraper "<(V8_ROOT)/BUILD.gn"  "\\"mksnapshot.*?sources = ")',
@@ -1486,7 +1450,6 @@
               'v8_enable_verify_predictable=<(v8_enable_verify_predictable)',
               'v8_target_cpu=<(v8_target_arch)',
               'v8_use_siphash=<(v8_use_siphash)',
-              'v8_enable_embedded_builtins=<(v8_enable_embedded_builtins)',
               'v8_enable_verify_csa=<(v8_enable_verify_csa)',
               'v8_enable_lite_mode=<(v8_enable_lite_mode)',
               'v8_enable_pointer_compression=<(v8_enable_pointer_compression)',
