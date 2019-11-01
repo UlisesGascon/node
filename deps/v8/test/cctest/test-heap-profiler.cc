@@ -2580,7 +2580,7 @@ TEST(ManyLocalsInSharedContext) {
       env->GetIsolate(), ok_object, v8::HeapGraphEdge::kInternal, "context");
   CHECK(context_object);
   // Check the objects are not duplicated in the context.
-  CHECK_EQ(v8::internal::Context::MIN_CONTEXT_SLOTS + num_objects - 1,
+  CHECK_EQ(v8::internal::Context::MIN_CONTEXT_EXTENDED_SLOTS + num_objects - 1,
            context_object->GetChildrenCount());
   // Check all the objects have got their names.
   // ... well check just every 15th because otherwise it's too slow in debug.
@@ -3027,16 +3027,12 @@ TEST(ArrayBufferSharedBackingStore) {
 
   v8::Local<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(isolate, 1024);
   CHECK_EQ(1024, static_cast<int>(ab->ByteLength()));
-  CHECK(!ab->IsExternal());
-  v8::ArrayBuffer::Contents ab_contents = ab->Externalize();
-  CHECK(ab->IsExternal());
+  std::shared_ptr<v8::BackingStore> backing_store = ab->GetBackingStore();
 
-  CHECK_EQ(1024, static_cast<int>(ab_contents.ByteLength()));
-  void* data = ab_contents.Data();
+  CHECK_EQ(1024, static_cast<int>(backing_store->ByteLength()));
+  void* data = backing_store->Data();
   CHECK_NOT_NULL(data);
-  v8::Local<v8::ArrayBuffer> ab2 =
-      v8::ArrayBuffer::New(isolate, data, ab_contents.ByteLength());
-  CHECK(ab2->IsExternal());
+  v8::Local<v8::ArrayBuffer> ab2 = v8::ArrayBuffer::New(isolate, backing_store);
   env->Global()->Set(env.local(), v8_str("ab1"), ab).FromJust();
   env->Global()->Set(env.local(), v8_str("ab2"), ab2).FromJust();
 
@@ -3062,7 +3058,6 @@ TEST(ArrayBufferSharedBackingStore) {
   CHECK(ab2_data);
   CHECK_EQ(ab1_data, ab2_data);
   CHECK_EQ(2, GetRetainersCount(snapshot, ab1_data));
-  free(data);
 }
 
 
@@ -3577,10 +3572,9 @@ TEST(AddressToTraceMap) {
 }
 
 static const v8::AllocationProfile::Node* FindAllocationProfileNode(
-    v8::Isolate* isolate,
-    v8::AllocationProfile& profile,  // NOLINT(runtime/references)
+    v8::Isolate* isolate, v8::AllocationProfile* profile,
     const Vector<const char*>& names) {
-  v8::AllocationProfile::Node* node = profile.GetRootNode();
+  v8::AllocationProfile::Node* node = profile->GetRootNode();
   for (int i = 0; node != nullptr && i < names.length(); ++i) {
     const char* name = names[i];
     auto children = node->children;
@@ -3650,7 +3644,7 @@ TEST(SamplingHeapProfiler) {
     CHECK(profile);
 
     const char* names[] = {"", "foo", "bar"};
-    auto node_bar = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node_bar = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                               ArrayVector(names));
     CHECK(node_bar);
 
@@ -3674,12 +3668,12 @@ TEST(SamplingHeapProfiler) {
     CHECK(profile);
 
     const char* names1[] = {"", "start", "f_0_0", "f_0_1", "f_0_2"};
-    auto node1 = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node1 = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                            ArrayVector(names1));
     CHECK(node1);
 
     const char* names2[] = {"", "generateFunctions"};
-    auto node2 = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node2 = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                            ArrayVector(names2));
     CHECK(node2);
 
@@ -3737,11 +3731,11 @@ TEST(SamplingHeapProfilerRateAgnosticEstimates) {
     CHECK(profile);
 
     const char* path_to_foo[] = {"", "foo"};
-    auto node_foo = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node_foo = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                               ArrayVector(path_to_foo));
     CHECK(node_foo);
     const char* path_to_bar[] = {"", "foo", "bar"};
-    auto node_bar = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node_bar = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                               ArrayVector(path_to_bar));
     CHECK(node_bar);
 
@@ -3761,11 +3755,11 @@ TEST(SamplingHeapProfilerRateAgnosticEstimates) {
     CHECK(profile);
 
     const char* path_to_foo[] = {"", "foo"};
-    auto node_foo = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node_foo = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                               ArrayVector(path_to_foo));
     CHECK(node_foo);
     const char* path_to_bar[] = {"", "foo", "bar"};
-    auto node_bar = FindAllocationProfileNode(env->GetIsolate(), *profile,
+    auto node_bar = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                               ArrayVector(path_to_bar));
     CHECK(node_bar);
 
@@ -3804,7 +3798,7 @@ TEST(SamplingHeapProfilerApiAllocation) {
       heap_profiler->GetAllocationProfile());
   CHECK(profile);
   const char* names[] = {"(V8 API)"};
-  auto node = FindAllocationProfileNode(env->GetIsolate(), *profile,
+  auto node = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                         ArrayVector(names));
   CHECK(node);
 
@@ -3944,7 +3938,7 @@ TEST(SamplingHeapProfilerPretenuredInlineAllocations) {
   heap_profiler->StopSamplingHeapProfiler();
 
   const char* names[] = {"f"};
-  auto node_f = FindAllocationProfileNode(env->GetIsolate(), *profile,
+  auto node_f = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                           ArrayVector(names));
   CHECK(node_f);
 
@@ -3974,7 +3968,7 @@ TEST(SamplingHeapProfilerLargeInterval) {
       heap_profiler->GetAllocationProfile());
   CHECK(profile);
   const char* names[] = {"(EXTERNAL)"};
-  auto node = FindAllocationProfileNode(env->GetIsolate(), *profile,
+  auto node = FindAllocationProfileNode(env->GetIsolate(), profile.get(),
                                         ArrayVector(names));
   CHECK(node);
 

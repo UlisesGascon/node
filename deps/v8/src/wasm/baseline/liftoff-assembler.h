@@ -228,7 +228,7 @@ class LiftoffAssembler : public TurboAssembler {
       return reg;
     }
 
-    // TODO(clemensh): Don't copy the full parent state (this makes us N^2).
+    // TODO(clemensb): Don't copy the full parent state (this makes us N^2).
     void InitMerge(const CacheState& source, uint32_t num_locals,
                    uint32_t arity, uint32_t stack_depth);
 
@@ -386,6 +386,7 @@ class LiftoffAssembler : public TurboAssembler {
   // Only used on 32-bit systems: Fill a register from a "half stack slot", i.e.
   // 4 bytes on the stack holding half of a 64-bit value.
   inline void FillI64Half(Register, uint32_t index, RegPairHalf);
+  inline void FillStackSlotsWithZero(uint32_t index, uint32_t count);
 
   // i32 binops.
   inline void emit_i32_add(Register dst, Register lhs, Register rhs);
@@ -416,8 +417,8 @@ class LiftoffAssembler : public TurboAssembler {
   inline void emit_i32_shr(Register dst, Register src, int amount);
 
   // i32 unops.
-  inline bool emit_i32_clz(Register dst, Register src);
-  inline bool emit_i32_ctz(Register dst, Register src);
+  inline void emit_i32_clz(Register dst, Register src);
+  inline void emit_i32_ctz(Register dst, Register src);
   inline bool emit_i32_popcnt(Register dst, Register src);
 
   // i64 binops.

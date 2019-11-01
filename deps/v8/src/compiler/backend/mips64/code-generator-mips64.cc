@@ -180,7 +180,7 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
       // Just encode the stub index. This will be patched when the code
       // is added to the native module and copied into wasm code space.
       __ CallRecordWriteStub(object_, scratch1_, remembered_set_action,
-                             save_fp_mode, wasm::WasmCode::kWasmRecordWrite);
+                             save_fp_mode, wasm::WasmCode::kRecordWrite);
     } else {
       __ CallRecordWriteStub(object_, scratch1_, remembered_set_action,
                              save_fp_mode);
@@ -278,42 +278,41 @@ Condition FlagsConditionToConditionOvf(FlagsCondition condition) {
   UNREACHABLE();
 }
 
-FPUCondition FlagsConditionToConditionCmpFPU(
-    bool& predicate,  // NOLINT(runtime/references)
-    FlagsCondition condition) {
+FPUCondition FlagsConditionToConditionCmpFPU(bool* predicate,
+                                             FlagsCondition condition) {
   switch (condition) {
     case kEqual:
-      predicate = true;
+      *predicate = true;
       return EQ;
     case kNotEqual:
-      predicate = false;
+      *predicate = false;
       return EQ;
     case kUnsignedLessThan:
-      predicate = true;
+      *predicate = true;
       return OLT;
     case kUnsignedGreaterThanOrEqual:
-      predicate = false;
+      *predicate = false;
       return OLT;
     case kUnsignedLessThanOrEqual:
-      predicate = true;
+      *predicate = true;
       return OLE;
     case kUnsignedGreaterThan:
-      predicate = false;
+      *predicate = false;
       return OLE;
     case kUnorderedEqual:
     case kUnorderedNotEqual:
-      predicate = true;
+      *predicate = true;
       break;
     default:
-      predicate = true;
+      *predicate = true;
       break;
   }
   UNREACHABLE();
 }
 
-void EmitWordLoadPoisoningIfNeeded(
-    CodeGenerator* codegen, InstructionCode opcode, Instruction* instr,
-    MipsOperandConverter& i) {  // NOLINT(runtime/references)
+void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen,
+                                   InstructionCode opcode, Instruction* instr,
+                                   MipsOperandConverter const& i) {
   const MemoryAccessMode access_mode =
       static_cast<MemoryAccessMode>(MiscField::decode(opcode));
   if (access_mode == kMemoryAccessPoisoned) {
@@ -489,6 +488,12 @@ void EmitWordLoadPoisoningIfNeeded(
     __ CallCFunction(ExternalReference::ieee754_##name##_function(), 0, 1); \
     /* Move the result in the double result register. */                    \
     __ MovFromFloatResult(i.OutputDoubleRegister());                        \
+  } while (0)
+
+#define ASSEMBLE_F64X2_ARITHMETIC_BINOP(op)                     \
+  do {                                                          \
+    __ op(i.OutputSimd128Register(), i.InputSimd128Register(0), \
+          i.InputSimd128Register(1));                           \
   } while (0)
 
 void CodeGenerator::AssembleDeconstructFrame() {
@@ -758,12 +763,25 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kArchCallCFunction: {
       int const num_parameters = MiscField::decode(instr->opcode());
-      Label return_location;
-      if (linkage()->GetIncomingDescriptor()->IsWasmCapiFunction()) {
+      Label start_call;
+      bool isWasmCapiFunction =
+          linkage()->GetIncomingDescriptor()->IsWasmCapiFunction();
+      // from start_call to return address.
+      int offset = 48;
+#if V8_HOST_ARCH_MIPS64
+      if (__ emit_debug_code()) {
+        offset += 16;
+      }
+#endif
+      if (isWasmCapiFunction) {
         // Put the return address in a stack slot.
-        __ LoadAddress(kScratchReg, &return_location);
-        __ sd(kScratchReg,
-              MemOperand(fp, WasmExitFrameConstants::kCallingPCOffset));
+        __ mov(kScratchReg, ra);
+        __ bind(&start_call);
+        __ nal();
+        __ nop();
+        __ Daddu(ra, ra, offset - 8);  // 8 = nop + nal
+        __ sd(ra, MemOperand(fp, WasmExitFrameConstants::kCallingPCOffset));
+        __ mov(ra, kScratchReg);
       }
       if (instr->InputAt(0)->IsImmediate()) {
         ExternalReference ref = i.InputExternalReference(0);
@@ -772,7 +790,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         Register func = i.InputRegister(0);
         __ CallCFunction(func, num_parameters);
       }
-      __ bind(&return_location);
+      if (isWasmCapiFunction) {
+        CHECK_EQ(offset, __ SizeOfCodeGeneratedSince(&start_call));
+      }
+
       RecordSafepoint(instr->reference_map(), Safepoint::kNoLazyDeopt);
       frame_access_state()->SetFrameAccessToDefault();
       // Ideally, we should decrement SP delta to match the change of stack
@@ -1276,7 +1297,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       FPURegister right = i.InputOrZeroSingleRegister(1);
       bool predicate;
       FPUCondition cc =
-          FlagsConditionToConditionCmpFPU(predicate, instr->flags_condition());
+          FlagsConditionToConditionCmpFPU(&predicate, instr->flags_condition());
 
       if ((left == kDoubleRegZero || right == kDoubleRegZero) &&
           !__ IsDoubleZeroRegSet()) {
@@ -1339,7 +1360,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       FPURegister right = i.InputOrZeroDoubleRegister(1);
       bool predicate;
       FPUCondition cc =
-          FlagsConditionToConditionCmpFPU(predicate, instr->flags_condition());
+          FlagsConditionToConditionCmpFPU(&predicate, instr->flags_condition());
       if ((left == kDoubleRegZero || right == kDoubleRegZero) &&
           !__ IsDoubleZeroRegSet()) {
         __ Move(kDoubleRegZero, 0.0);
@@ -2042,6 +2063,64 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                 i.InputSimd128Register(1));
       break;
     }
+    case kMips64F64x2Abs: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      __ bclri_d(i.OutputSimd128Register(), i.InputSimd128Register(0), 63);
+      break;
+    }
+    case kMips64F64x2Neg: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      __ bnegi_d(i.OutputSimd128Register(), i.InputSimd128Register(0), 63);
+      break;
+    }
+    case kMips64F64x2Sqrt: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      __ fsqrt_d(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kMips64F64x2Add: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      ASSEMBLE_F64X2_ARITHMETIC_BINOP(fadd_d);
+      break;
+    }
+    case kMips64F64x2Sub: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      ASSEMBLE_F64X2_ARITHMETIC_BINOP(fsub_d);
+      break;
+    }
+    case kMips64F64x2Mul: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      ASSEMBLE_F64X2_ARITHMETIC_BINOP(fmul_d);
+      break;
+    }
+    case kMips64F64x2Div: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      ASSEMBLE_F64X2_ARITHMETIC_BINOP(fdiv_d);
+      break;
+    }
+    case kMips64F64x2Splat: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      __ Move(kScratchReg, i.InputDoubleRegister(0));
+      __ fill_d(i.OutputSimd128Register(), kScratchReg);
+      break;
+    }
+    case kMips64F64x2ExtractLane: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      __ copy_s_d(kScratchReg, i.InputSimd128Register(0), i.InputInt8(1));
+      __ Move(i.OutputDoubleRegister(), kScratchReg);
+      break;
+    }
+    case kMips64F64x2ReplaceLane: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      Simd128Register src = i.InputSimd128Register(0);
+      Simd128Register dst = i.OutputSimd128Register();
+      if (src != dst) {
+        __ move_v(dst, src);
+      }
+      __ Move(kScratchReg, i.InputDoubleRegister(2));
+      __ insert_d(dst, i.InputInt8(1), kScratchReg);
+      break;
+    }
     case kMips64F32x4Splat: {
       CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
       __ FmoveLow(kScratchReg, i.InputSingleRegister(0));
@@ -2231,6 +2310,11 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kMips64I32x4UConvertF32x4: {
       CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
       __ ftrunc_u_w(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      break;
+    }
+    case kMips64F32x4Sqrt: {
+      CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
+      __ fsqrt_w(i.OutputSimd128Register(), i.InputSimd128Register(0));
       break;
     }
     case kMips64I32x4Neg: {
@@ -2922,6 +3006,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ vshf_b(dst, src1, src0);
       break;
     }
+    case kMips64S8x16Swizzle: {
+      Simd128Register dst = i.OutputSimd128Register(),
+                      tbl = i.InputSimd128Register(0),
+                      ctl = i.InputSimd128Register(1);
+      DCHECK(dst != ctl && dst != tbl);
+      Simd128Register zeroReg = i.TempSimd128Register(0);
+      __ fill_d(zeroReg, zero_reg);
+      __ move_v(dst, ctl);
+      __ vshf_b(dst, tbl, zeroReg);
+      break;
+    }
     case kMips64S8x8Reverse: {
       CpuFeatureScope msa_scope(tasm(), MIPS_SIMD);
       // src = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
@@ -3151,7 +3246,7 @@ void AssembleBranchToLabels(CodeGenerator* gen, TurboAssembler* tasm,
   } else if (instr->arch_opcode() == kMips64CmpS ||
              instr->arch_opcode() == kMips64CmpD) {
     bool predicate;
-    FlagsConditionToConditionCmpFPU(predicate, condition);
+    FlagsConditionToConditionCmpFPU(&predicate, condition);
     if (predicate) {
       __ BranchTrueF(tlabel);
     } else {
@@ -3261,7 +3356,7 @@ void CodeGenerator::AssembleBranchPoisoning(FlagsCondition condition,
     case kMips64CmpS:
     case kMips64CmpD: {
       bool predicate;
-      FlagsConditionToConditionCmpFPU(predicate, condition);
+      FlagsConditionToConditionCmpFPU(&predicate, condition);
       if (predicate) {
         __ LoadZeroIfFPUCondition(kSpeculationPoisonRegister);
       } else {
@@ -3470,7 +3565,7 @@ void CodeGenerator::AssembleArchBoolean(Instruction* instr,
       __ Move(kDoubleRegZero, 0.0);
     }
     bool predicate;
-    FlagsConditionToConditionCmpFPU(predicate, condition);
+    FlagsConditionToConditionCmpFPU(&predicate, condition);
     if (kArchVariant != kMips64r6) {
       __ li(result, Operand(1));
       if (predicate) {

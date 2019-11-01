@@ -95,6 +95,7 @@ class Builtins {
 
   static CallInterfaceDescriptor CallInterfaceDescriptorFor(Name name);
   V8_EXPORT_PRIVATE static Callable CallableFor(Isolate* isolate, Name name);
+  static bool HasJSLinkage(int index);
 
   static int GetStackParameterCount(Name name);
 
@@ -140,9 +141,9 @@ class Builtins {
   // area.
   static bool IsWasmRuntimeStub(int index);
 
-  // Updates the table of builtin entry points based on the current contents of
-  // the builtins table.
-  static void UpdateBuiltinEntryTable(Isolate* isolate);
+  // Initializes the table of builtin entry points based on the current contents
+  // of the builtins table.
+  static void InitializeBuiltinEntryTable(Isolate* isolate);
 
   // Emits a CodeCreateEvent for every builtin.
   static void EmitCodeCreateEvents(Isolate* isolate);

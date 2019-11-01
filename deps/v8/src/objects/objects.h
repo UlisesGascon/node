@@ -46,19 +46,22 @@
 //         - JSArrayBufferView
 //           - JSTypedArray
 //           - JSDataView
-//         - JSBoundFunction
 //         - JSCollection
 //           - JSSet
 //           - JSMap
+//         - JSCustomElementsObject (may have elements despite empty FixedArray)
+//           - JSSpecialObject (requires custom property lookup handling)
+//             - JSGlobalObject
+//             - JSGlobalProxy
+//             - JSModuleNamespace
+//           - JSPrimitiveWrapper
 //         - JSDate
-//         - JSFunction
+//         - JSFunctionOrBoundFunction
+//           - JSBoundFunction
+//           - JSFunction
 //         - JSGeneratorObject
-//         - JSGlobalObject
-//         - JSGlobalProxy
 //         - JSMapIterator
 //         - JSMessageObject
-//         - JSModuleNamespace
-//         - JSPrimitiveWrapper
 //         - JSRegExp
 //         - JSSetIterator
 //         - JSStringIterator
@@ -104,30 +107,32 @@
 //         - ScriptContextTable
 //         - ClosureFeedbackCellArray
 //       - FixedDoubleArray
-//     - Name
-//       - String
-//         - SeqString
-//           - SeqOneByteString
-//           - SeqTwoByteString
-//         - SlicedString
-//         - ConsString
-//         - ThinString
-//         - ExternalString
-//           - ExternalOneByteString
-//           - ExternalTwoByteString
-//         - InternalizedString
-//           - SeqInternalizedString
-//             - SeqOneByteInternalizedString
-//             - SeqTwoByteInternalizedString
-//           - ConsInternalizedString
-//           - ExternalInternalizedString
-//             - ExternalOneByteInternalizedString
-//             - ExternalTwoByteInternalizedString
-//       - Symbol
+//     - PrimitiveHeapObject
+//       - BigInt
+//       - HeapNumber
+//       - Name
+//         - String
+//           - SeqString
+//             - SeqOneByteString
+//             - SeqTwoByteString
+//           - SlicedString
+//           - ConsString
+//           - ThinString
+//           - ExternalString
+//             - ExternalOneByteString
+//             - ExternalTwoByteString
+//           - InternalizedString
+//             - SeqInternalizedString
+//               - SeqOneByteInternalizedString
+//               - SeqTwoByteInternalizedString
+//             - ConsInternalizedString
+//             - ExternalInternalizedString
+//               - ExternalOneByteInternalizedString
+//               - ExternalTwoByteInternalizedString
+//         - Symbol
+//       - Oddball
 //     - Context
 //       - NativeContext
-//     - HeapNumber
-//     - BigInt
 //     - Cell
 //     - DescriptorArray
 //     - PropertyCell
@@ -135,7 +140,6 @@
 //     - Code
 //     - AbstractCode, a wrapper around Code or BytecodeArray
 //     - Map
-//     - Oddball
 //     - Foreign
 //     - SmallOrderedHashTable
 //       - SmallOrderedHashMap
@@ -311,6 +315,18 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   V8_EXPORT_PRIVATE bool ToInt32(int32_t* value);
   inline bool ToUint32(uint32_t* value) const;
 
+  // Converts a HeapNumber or String to an int32. Negative numbers are
+  // not supported. This is used for calculating array indices but
+  // differs from an Array Index in the regard that this does not
+  // support the full array index range. This only supports positive
+  // numbers less than INT_MAX.
+  //
+  // if val < 0, returns -1
+  // if 0 <= val <= INT_MAX, returns val
+  // if INT_MAX < val <= JSArray::kMaxArrayIndex, returns -2
+  // if JSArray::kMaxArrayIndex < val, returns -1
+  static int32_t ToArrayIndexSlow(Address addr);
+
   inline Representation OptimalRepresentation(Isolate* isolate) const;
 
   inline ElementsKind OptimalElementsKind(Isolate* isolate) const;
@@ -452,10 +468,9 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
       Isolate* isolate, Handle<Object> object, Handle<Object> callable);
 
   V8_EXPORT_PRIVATE V8_WARN_UNUSED_RESULT static MaybeHandle<Object>
-  GetProperty(LookupIterator* it,
-              OnNonExistent on_non_existent = OnNonExistent::kReturnUndefined);
+  GetProperty(LookupIterator* it, bool is_global_reference = false);
 
-  // ES6 [[Set]] (when passed kDontThrow)
+  // ES6 [[Set]] (when passed kDontThrow and is_global_reference is false)
   // Invariants for this and related functions (unless stated otherwise):
   // 1) When the result is Nothing, an exception is pending.
   // 2) When passed kThrowOnError, the result is never Just(false).
@@ -464,7 +479,8 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // covered by it (eg., concerning API callbacks).
   V8_EXPORT_PRIVATE V8_WARN_UNUSED_RESULT static Maybe<bool> SetProperty(
       LookupIterator* it, Handle<Object> value, StoreOrigin store_origin,
-      Maybe<ShouldThrow> should_throw = Nothing<ShouldThrow>());
+      Maybe<ShouldThrow> should_throw = Nothing<ShouldThrow>(),
+      bool is_global_reference = false);
   V8_EXPORT_PRIVATE V8_WARN_UNUSED_RESULT static MaybeHandle<Object>
   SetProperty(Isolate* isolate, Handle<Object> object, Handle<Name> name,
               Handle<Object> value,
@@ -607,15 +623,13 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // For use with std::unordered_set.
   struct Hasher {
     size_t operator()(const Object o) const {
-      return std::hash<v8::internal::Address>{}(o.ptr());
+      return std::hash<v8::internal::Address>{}(static_cast<Tagged_t>(o.ptr()));
     }
   };
 
   // For use with std::map.
   struct Comparer {
-    bool operator()(const Object a, const Object b) const {
-      return a.ptr() < b.ptr();
-    }
+    bool operator()(const Object a, const Object b) const { return a < b; }
   };
 
   template <class T, typename std::enable_if<std::is_arithmetic<T>::value,
@@ -679,7 +693,7 @@ class Object : public TaggedImpl<HeapObjectReferenceType::STRONG, Address> {
   // Return value is only meaningful if [found] is set to true on return.
   V8_WARN_UNUSED_RESULT static Maybe<bool> SetPropertyInternal(
       LookupIterator* it, Handle<Object> value, Maybe<ShouldThrow> should_throw,
-      StoreOrigin store_origin, bool* found);
+      StoreOrigin store_origin, bool is_global_reference, bool* found);
 
   V8_WARN_UNUSED_RESULT static MaybeHandle<Name> ConvertToName(
       Isolate* isolate, Handle<Object> input);
@@ -784,7 +798,8 @@ enum AccessorComponent { ACCESSOR_GETTER, ACCESSOR_SETTER };
 
 enum class GetKeysConversion {
   kKeepNumbers = static_cast<int>(v8::KeyConversionMode::kKeepNumbers),
-  kConvertToString = static_cast<int>(v8::KeyConversionMode::kConvertToString)
+  kConvertToString = static_cast<int>(v8::KeyConversionMode::kConvertToString),
+  kNoNumbers = static_cast<int>(v8::KeyConversionMode::kNoNumbers)
 };
 
 enum class KeyCollectionMode {

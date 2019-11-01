@@ -11,7 +11,6 @@
 #if defined(V8_OS_WIN64)
 #include "src/builtins/builtins.h"
 #include "src/diagnostics/unwinding-info-win64.h"
-#include "src/objects/objects-inl.h"
 #include "src/snapshot/embedded/embedded-data.h"
 #include "src/snapshot/embedded/embedded-file-writer.h"
 #endif  // V8_OS_WIN64
@@ -239,7 +238,7 @@ void EmitUnwindData(PlatformEmbeddedFileWriterWin* w,
   w->Comment("    UnwindInfoAddress");
   w->StartPdataSection();
   std::vector<int> code_chunks;
-  std::vector<int> fp_adjustments;
+  std::vector<win64_unwindinfo::FrameOffsets> fp_adjustments;
 
   for (int i = 0; i < Builtins::builtin_count; i++) {
     if (!blob->ContainsBuiltin(i)) continue;
@@ -250,7 +249,7 @@ void EmitUnwindData(PlatformEmbeddedFileWriterWin* w,
     uint32_t builtin_size = blob->InstructionSizeOfBuiltin(i);
 
     const std::vector<int>& xdata_desc = unwind_infos[i].fp_offsets();
-    const std::vector<int>& xdata_fp_adjustments =
+    const std::vector<win64_unwindinfo::FrameOffsets>& xdata_fp_adjustments =
         unwind_infos[i].fp_adjustments();
     DCHECK_EQ(xdata_desc.size(), xdata_fp_adjustments.size());
 
@@ -670,11 +669,7 @@ void PlatformEmbeddedFileWriterWin::DeclareExternalFilename(
   // Replace any Windows style paths (backslashes) with forward
   // slashes.
   std::string fixed_filename(filename);
-  for (auto& c : fixed_filename) {
-    if (c == '\\') {
-      c = '/';
-    }
-  }
+  std::replace(fixed_filename.begin(), fixed_filename.end(), '\\', '/');
   fprintf(fp_, ".file %d \"%s\"\n", fileid, fixed_filename.c_str());
 }
 

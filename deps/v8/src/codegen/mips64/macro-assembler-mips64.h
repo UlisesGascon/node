@@ -74,14 +74,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1, Register reg2 = no_reg,
 #define SmiWordOffset(offset) offset
 #endif
 
-inline MemOperand ContextMemOperand(Register context, int index) {
-  return MemOperand(context, Context::SlotOffset(index));
-}
-
-inline MemOperand NativeContextMemOperand() {
-  return ContextMemOperand(cp, Context::NATIVE_CONTEXT_INDEX);
-}
-
 // Generate a MemOperand for loading a field from an object.
 inline MemOperand FieldMemOperand(Register object, int offset) {
   return MemOperand(object, offset - kHeapObjectTag);
@@ -850,12 +842,10 @@ class V8_EXPORT_PRIVATE TurboAssembler : public TurboAssemblerBase {
   void CallCFunctionHelper(Register function, int num_reg_arguments,
                            int num_double_arguments);
 
-  bool CalculateOffset(Label* L, int32_t& offset,  // NOLINT(runtime/references)
-                       OffsetSize bits);
-  bool CalculateOffset(Label* L, int32_t& offset,  // NOLINT(runtime/references)
-                       OffsetSize bits,
-                       Register& scratch,  // NOLINT(runtime/references)
-                       const Operand& rt);
+  // TODO(mips) Reorder parameters so out parameters come last.
+  bool CalculateOffset(Label* L, int32_t* offset, OffsetSize bits);
+  bool CalculateOffset(Label* L, int32_t* offset, OffsetSize bits,
+                       Register* scratch, const Operand& rt);
 
   void BranchShortHelperR6(int32_t offset, Label* L);
   void BranchShortHelper(int16_t offset, Label* L, BranchDelaySlot bdslot);
@@ -1016,6 +1006,8 @@ class V8_EXPORT_PRIVATE MacroAssembler : public TurboAssembler {
   void LeaveExitFrame(bool save_doubles, Register arg_count,
                       bool do_return = NO_EMIT_RETURN,
                       bool argument_count_is_length = false);
+
+  void LoadMap(Register destination, Register object);
 
   // Make sure the stack is aligned. Only emits code in debug mode.
   void AssertStackIsAligned();

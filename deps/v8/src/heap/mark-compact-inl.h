@@ -21,26 +21,6 @@
 namespace v8 {
 namespace internal {
 
-template <typename ConcreteState, AccessMode access_mode>
-bool MarkingStateBase<ConcreteState, access_mode>::GreyToBlack(HeapObject obj) {
-  MemoryChunk* p = MemoryChunk::FromHeapObject(obj);
-  MarkBit markbit = MarkBitFrom(p, obj.address());
-  if (!Marking::GreyToBlack<access_mode>(markbit)) return false;
-  static_cast<ConcreteState*>(this)->IncrementLiveBytes(p, obj.Size());
-  return true;
-}
-
-template <typename ConcreteState, AccessMode access_mode>
-bool MarkingStateBase<ConcreteState, access_mode>::WhiteToGrey(HeapObject obj) {
-  return Marking::WhiteToGrey<access_mode>(MarkBitFrom(obj));
-}
-
-template <typename ConcreteState, AccessMode access_mode>
-bool MarkingStateBase<ConcreteState, access_mode>::WhiteToBlack(
-    HeapObject obj) {
-  return WhiteToGrey(obj) && GreyToBlack(obj);
-}
-
 template <FixedArrayVisitationMode fixed_array_mode,
           TraceRetainingPathMode retaining_path_mode, typename MarkingState>
 MarkingVisitor<fixed_array_mode, retaining_path_mode,
@@ -167,7 +147,7 @@ int MarkingVisitor<fixed_array_mode, retaining_path_mode, MarkingState>::
     VisitEphemeronHashTable(Map map, EphemeronHashTable table) {
   collector_->AddEphemeronHashTable(table);
 
-  for (int i = 0; i < table.Capacity(); i++) {
+  for (InternalIndex i : table.IterateEntries()) {
     ObjectSlot key_slot =
         table.RawFieldOfElementAt(EphemeronHashTable::EntryToIndex(i));
     HeapObject key = HeapObject::cast(table.KeyAt(i));
@@ -485,7 +465,8 @@ void MarkCompactCollector::RecordSlot(HeapObject object, HeapObjectSlot slot,
   MemoryChunk* source_page = MemoryChunk::FromHeapObject(object);
   if (target_page->IsEvacuationCandidate<AccessMode::ATOMIC>() &&
       !source_page->ShouldSkipEvacuationSlotRecording<AccessMode::ATOMIC>()) {
-    RememberedSet<OLD_TO_OLD>::Insert(source_page, slot.address());
+    RememberedSet<OLD_TO_OLD>::Insert<AccessMode::ATOMIC>(source_page,
+                                                          slot.address());
   }
 }
 
@@ -493,7 +474,8 @@ void MarkCompactCollector::RecordSlot(MemoryChunk* source_page,
                                       HeapObjectSlot slot, HeapObject target) {
   MemoryChunk* target_page = MemoryChunk::FromHeapObject(target);
   if (target_page->IsEvacuationCandidate<AccessMode::ATOMIC>()) {
-    RememberedSet<OLD_TO_OLD>::Insert(source_page, slot.address());
+    RememberedSet<OLD_TO_OLD>::Insert<AccessMode::ATOMIC>(source_page,
+                                                          slot.address());
   }
 }
 
@@ -615,9 +597,9 @@ void LiveObjectRange<mode>::iterator::AdvanceToNextValidObject() {
 
       // We found a live object.
       if (!object.is_null()) {
-        // Do not use IsFiller() here. This may cause a data race for reading
-        // out the instance type when a new map concurrently is written into
-        // this object while iterating over the object.
+        // Do not use IsFreeSpaceOrFiller() here. This may cause a data race for
+        // reading out the instance type when a new map concurrently is written
+        // into this object while iterating over the object.
         if (map == one_word_filler_map_ || map == two_word_filler_map_ ||
             map == free_space_map_) {
           // There are two reasons why we can get black or grey fillers:

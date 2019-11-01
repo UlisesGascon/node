@@ -16,12 +16,6 @@ class TypedArrayBuiltinsAssembler : public CodeStubAssembler {
   explicit TypedArrayBuiltinsAssembler(compiler::CodeAssemblerState* state)
       : CodeStubAssembler(state) {}
 
-  template <class... TArgs>
-  TNode<JSTypedArray> TypedArraySpeciesCreate(const char* method_name,
-                                              TNode<Context> context,
-                                              TNode<JSTypedArray> exemplar,
-                                              TArgs... args);
-
   void GenerateTypedArrayPrototypeIterationMethod(TNode<Context> context,
                                                   TNode<Object> receiver,
                                                   const char* method_name,
@@ -102,8 +96,8 @@ class TypedArrayBuiltinsAssembler : public CodeStubAssembler {
 
   void CallCCopyTypedArrayElementsSlice(TNode<JSTypedArray> source,
                                         TNode<JSTypedArray> dest,
-                                        TNode<IntPtrT> start,
-                                        TNode<IntPtrT> end);
+                                        TNode<UintPtrT> start,
+                                        TNode<UintPtrT> end);
 
   using TypedArraySwitchCase = std::function<void(ElementsKind, int, int)>;
 
@@ -111,6 +105,18 @@ class TypedArrayBuiltinsAssembler : public CodeStubAssembler {
       TNode<Word32T> elements_kind, const TypedArraySwitchCase& case_function);
 
   TNode<BoolT> IsSharedArrayBuffer(TNode<JSArrayBuffer> buffer);
+
+  void SetJSTypedArrayOnHeapDataPtr(TNode<JSTypedArray> holder,
+                                    TNode<ByteArray> base,
+                                    TNode<UintPtrT> offset);
+  void SetJSTypedArrayOffHeapDataPtr(TNode<JSTypedArray> holder,
+                                     TNode<RawPtrT> base,
+                                     TNode<UintPtrT> offset);
+  void StoreJSTypedArrayElementFromNumeric(TNode<Context> context,
+                                           TNode<JSTypedArray> typed_array,
+                                           TNode<UintPtrT> index_node,
+                                           TNode<Numeric> value,
+                                           ElementsKind elements_kind);
 };
 
 }  // namespace internal

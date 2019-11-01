@@ -55,7 +55,7 @@ HeapObject SemiSpaceObjectIterator::Next() {
     }
     HeapObject object = HeapObject::FromAddress(current_);
     current_ += object.Size();
-    if (!object.IsFiller()) {
+    if (!object.IsFreeSpaceOrFiller()) {
       return object;
     }
   }
@@ -83,7 +83,7 @@ HeapObject PagedSpaceObjectIterator::FromCurrentPage() {
     const int obj_size = obj.Size();
     cur_addr_ += obj_size;
     DCHECK_LE(cur_addr_, cur_end_);
-    if (!obj.IsFiller()) {
+    if (!obj.IsFreeSpaceOrFiller()) {
       if (obj.IsCode()) {
         DCHECK_EQ(space_, space_->heap()->code_space());
         DCHECK_CODEOBJECT_SIZE(obj_size, space_);
@@ -160,10 +160,6 @@ bool NewSpace::ToSpaceContainsSlow(Address a) {
 bool NewSpace::ToSpaceContains(Object o) { return to_space_.Contains(o); }
 bool NewSpace::FromSpaceContains(Object o) { return from_space_.Contains(o); }
 
-bool PagedSpace::Contains(Address addr) {
-  return MemoryChunk::FromAnyPointerAddress(addr)->owner() == this;
-}
-
 bool PagedSpace::Contains(Object o) {
   if (!o.IsHeapObject()) return false;
   return Page::FromAddress(o.ptr())->owner() == this;
@@ -199,13 +195,6 @@ bool PagedSpace::TryFreeLast(HeapObject object, int object_size) {
     }
   }
   return false;
-}
-
-MemoryChunk* MemoryChunk::FromAnyPointerAddress(Address addr) {
-  while (!HasHeaderSentinel(addr)) {
-    addr = BaseAddress(addr) - 1;
-  }
-  return FromAddress(addr);
 }
 
 void MemoryChunk::IncrementExternalBackingStoreBytes(
@@ -480,7 +469,7 @@ AllocationResult PagedSpace::AllocateRaw(int size_in_bytes,
   AllocationResult result = AllocateRawUnaligned(size_in_bytes, origin);
 #endif
   HeapObject heap_obj;
-  if (!result.IsRetry() && result.To(&heap_obj) && !is_local()) {
+  if (!result.IsRetry() && result.To(&heap_obj) && !is_local_space()) {
     AllocationStep(static_cast<int>(size_in_bytes + bytes_since_last),
                    heap_obj.address(), size_in_bytes);
     StartNextInlineAllocationStep();

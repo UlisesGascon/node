@@ -47,7 +47,7 @@ inline Operand GetStackSlot(uint32_t index) {
   return Operand(rbp, -kFirstStackSlotOffset - offset);
 }
 
-// TODO(clemensh): Make this a constexpr variable once Operand is constexpr.
+// TODO(clemensb): Make this a constexpr variable once Operand is constexpr.
 inline Operand GetInstanceOperand() { return Operand(rbp, -16); }
 
 inline Operand GetMemOp(LiftoffAssembler* assm, Register addr, Register offset,
@@ -452,6 +452,35 @@ void LiftoffAssembler::FillI64Half(Register, uint32_t index, RegPairHalf) {
   UNREACHABLE();
 }
 
+void LiftoffAssembler::FillStackSlotsWithZero(uint32_t index, uint32_t count) {
+  DCHECK_LT(0, count);
+  uint32_t last_stack_slot = index + count - 1;
+  RecordUsedSpillSlot(last_stack_slot);
+
+  if (count <= 3) {
+    // Special straight-line code for up to three slots
+    // (7-10 bytes per slot: REX C7 <1-4 bytes op> <4 bytes imm>).
+    for (uint32_t offset = 0; offset < count; ++offset) {
+      movq(liftoff::GetStackSlot(index + offset), Immediate(0));
+    }
+  } else {
+    // General case for bigger counts.
+    // This sequence takes 20-23 bytes (3 for pushes, 4-7 for lea, 2 for xor, 5
+    // for mov, 3 for repstosq, 3 for pops).
+    // From intel manual: repstosq fills RCX quadwords at [RDI] with RAX.
+    pushq(rax);
+    pushq(rcx);
+    pushq(rdi);
+    leaq(rdi, liftoff::GetStackSlot(last_stack_slot));
+    xorl(rax, rax);
+    movl(rcx, Immediate(count));
+    repstosq();
+    popq(rdi);
+    popq(rcx);
+    popq(rax);
+  }
+}
+
 void LiftoffAssembler::emit_i32_add(Register dst, Register lhs, Register rhs) {
   if (lhs != dst) {
     leal(dst, Operand(lhs, rhs, times_1, 0));
@@ -711,38 +740,12 @@ void LiftoffAssembler::emit_i32_shr(Register dst, Register src, int amount) {
   shrl(dst, Immediate(amount));
 }
 
-bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
-  Label nonzero_input;
-  Label continuation;
-  testl(src, src);
-  j(not_zero, &nonzero_input, Label::kNear);
-  movl(dst, Immediate(32));
-  jmp(&continuation, Label::kNear);
-
-  bind(&nonzero_input);
-  // Get most significant bit set (MSBS).
-  bsrl(dst, src);
-  // CLZ = 31 - MSBS = MSBS ^ 31.
-  xorl(dst, Immediate(31));
-
-  bind(&continuation);
-  return true;
+void LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
+  Lzcntl(dst, src);
 }
 
-bool LiftoffAssembler::emit_i32_ctz(Register dst, Register src) {
-  Label nonzero_input;
-  Label continuation;
-  testl(src, src);
-  j(not_zero, &nonzero_input, Label::kNear);
-  movl(dst, Immediate(32));
-  jmp(&continuation, Label::kNear);
-
-  bind(&nonzero_input);
-  // Get least significant bit set, which equals number of trailing zeros.
-  bsfl(dst, src);
-
-  bind(&continuation);
-  return true;
+void LiftoffAssembler::emit_i32_ctz(Register dst, Register src) {
+  Tzcntl(dst, src);
 }
 
 bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {

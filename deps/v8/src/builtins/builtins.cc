@@ -88,14 +88,16 @@ const BuiltinMetadata builtin_metadata[] = {BUILTIN_LIST(
 }  // namespace
 
 BailoutId Builtins::GetContinuationBailoutId(Name name) {
-  DCHECK(Builtins::KindOf(name) == TFJ || Builtins::KindOf(name) == TFC);
+  DCHECK(Builtins::KindOf(name) == TFJ || Builtins::KindOf(name) == TFC ||
+         Builtins::KindOf(name) == TFS);
   return BailoutId(BailoutId::kFirstBuiltinContinuationId + name);
 }
 
 Builtins::Name Builtins::GetBuiltinFromBailoutId(BailoutId id) {
   int builtin_index = id.ToInt() - BailoutId::kFirstBuiltinContinuationId;
   DCHECK(Builtins::KindOf(builtin_index) == TFJ ||
-         Builtins::KindOf(builtin_index) == TFC);
+         Builtins::KindOf(builtin_index) == TFC ||
+         Builtins::KindOf(builtin_index) == TFS);
   return static_cast<Name>(builtin_index);
 }
 
@@ -103,10 +105,8 @@ void Builtins::TearDown() { initialized_ = false; }
 
 const char* Builtins::Lookup(Address pc) {
   // Off-heap pc's can be looked up through binary search.
-  if (FLAG_embedded_builtins) {
-    Code maybe_builtin = InstructionStream::TryLookupCode(isolate_, pc);
-    if (!maybe_builtin.is_null()) return name(maybe_builtin.builtin_index());
-  }
+  Code maybe_builtin = InstructionStream::TryLookupCode(isolate_, pc);
+  if (!maybe_builtin.is_null()) return name(maybe_builtin.builtin_index());
 
   // May be called during initialization (disassembler).
   if (initialized_) {
@@ -189,6 +189,13 @@ Callable Builtins::CallableFor(Isolate* isolate, Name name) {
 }
 
 // static
+bool Builtins::HasJSLinkage(int builtin_index) {
+  Name name = static_cast<Name>(builtin_index);
+  DCHECK_NE(BCH, Builtins::KindOf(name));
+  return CallInterfaceDescriptorFor(name) == JSTrampolineDescriptor{};
+}
+
+// static
 const char* Builtins::name(int index) {
   DCHECK(IsBuiltinId(index));
   return builtin_metadata[index].name;
@@ -204,7 +211,7 @@ void Builtins::PrintBuiltinCode() {
                      CStrVector(FLAG_print_builtin_code_filter))) {
       CodeTracer::Scope trace_scope(isolate_->GetCodeTracer());
       OFStream os(trace_scope.file());
-      code->Disassemble(builtin_name, os);
+      code->Disassemble(builtin_name, os, isolate_);
       os << "\n";
     }
   }
@@ -248,13 +255,9 @@ bool Builtins::IsBuiltinHandle(Handle<HeapObject> maybe_code,
 
 // static
 bool Builtins::IsIsolateIndependentBuiltin(const Code code) {
-  if (FLAG_embedded_builtins) {
-    const int builtin_index = code.builtin_index();
-    return Builtins::IsBuiltinId(builtin_index) &&
-           Builtins::IsIsolateIndependent(builtin_index);
-  } else {
-    return false;
-  }
+  const int builtin_index = code.builtin_index();
+  return Builtins::IsBuiltinId(builtin_index) &&
+         Builtins::IsIsolateIndependent(builtin_index);
 }
 
 // static
@@ -274,7 +277,7 @@ bool Builtins::IsWasmRuntimeStub(int index) {
 }
 
 // static
-void Builtins::UpdateBuiltinEntryTable(Isolate* isolate) {
+void Builtins::InitializeBuiltinEntryTable(Isolate* isolate) {
   Heap* heap = isolate->heap();
   Address* builtin_entry_table = isolate->builtin_entry_table();
   for (int i = 0; i < builtin_count; i++) {

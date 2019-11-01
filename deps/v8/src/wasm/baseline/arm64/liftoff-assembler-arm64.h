@@ -43,10 +43,12 @@ constexpr int32_t kInstanceOffset = 2 * kSystemPointerSize;
 constexpr int32_t kFirstStackSlotOffset = kInstanceOffset + kSystemPointerSize;
 constexpr int32_t kConstantStackSpace = 0;
 
+inline int GetStackSlotOffset(uint32_t index) {
+  return kFirstStackSlotOffset + index * LiftoffAssembler::kStackSlotSize;
+}
+
 inline MemOperand GetStackSlot(uint32_t index) {
-  int32_t offset =
-      kFirstStackSlotOffset + index * LiftoffAssembler::kStackSlotSize;
-  return MemOperand(fp, -offset);
+  return MemOperand(fp, -GetStackSlotOffset(index));
 }
 
 inline MemOperand GetInstanceOperand() {
@@ -398,6 +400,38 @@ void LiftoffAssembler::FillI64Half(Register, uint32_t index, RegPairHalf) {
   UNREACHABLE();
 }
 
+void LiftoffAssembler::FillStackSlotsWithZero(uint32_t index, uint32_t count) {
+  DCHECK_LT(0, count);
+  uint32_t last_stack_slot = index + count - 1;
+  RecordUsedSpillSlot(last_stack_slot);
+
+  int max_stp_offset = -liftoff::GetStackSlotOffset(index + count - 1);
+  if (count <= 12 && IsImmLSPair(max_stp_offset, kXRegSizeLog2)) {
+    // Special straight-line code for up to 12 slots. Generates one
+    // instruction per two slots (<= 6 instructions total).
+    for (; count > 1; count -= 2) {
+      STATIC_ASSERT(kStackSlotSize == kSystemPointerSize);
+      stp(xzr, xzr, liftoff::GetStackSlot(index + count - 1));
+    }
+    DCHECK(count == 0 || count == 1);
+    if (count) str(xzr, liftoff::GetStackSlot(index));
+  } else {
+    // General case for bigger counts (5-8 instructions).
+    UseScratchRegisterScope temps(this);
+    Register address_reg = temps.AcquireX();
+    // This {Sub} might use another temp register if the offset is too large.
+    Sub(address_reg, fp, liftoff::GetStackSlotOffset(last_stack_slot));
+    Register count_reg = temps.AcquireX();
+    Mov(count_reg, count);
+
+    Label loop;
+    bind(&loop);
+    sub(count_reg, count_reg, 1);
+    str(xzr, MemOperand(address_reg, kSystemPointerSize, PostIndex));
+    cbnz(count_reg, &loop);
+  }
+}
+
 #define I32_BINOP(name, instruction)                             \
   void LiftoffAssembler::emit_##name(Register dst, Register lhs, \
                                      Register rhs) {             \
@@ -529,15 +563,13 @@ FP64_UNOP(f64_sqrt, Fsqrt)
 #undef I64_SHIFTOP
 #undef I64_SHIFTOP_I
 
-bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
+void LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
   Clz(dst.W(), src.W());
-  return true;
 }
 
-bool LiftoffAssembler::emit_i32_ctz(Register dst, Register src) {
+void LiftoffAssembler::emit_i32_ctz(Register dst, Register src) {
   Rbit(dst.W(), src.W());
   Clz(dst.W(), dst.W());
-  return true;
 }
 
 bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {
