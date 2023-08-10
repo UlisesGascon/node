@@ -1297,7 +1297,7 @@ should be opened on the [Node.js Snap management repository][] requesting this
 take place once a new LTS line has been released.
 
 [Build issue tracker]: https://github.com/nodejs/build/issues/new
-[CI lockdown procedure]: https://github.com/nodejs/build/blob/HEAD/doc/jenkins-guide.md#restricting-access-for-security-releases
+[CI lockdown procedure]: https://github.com/nodejs/build/blob/HEAD/doc/jenkins-guide.md#security-releases
 [Node.js Snap management repository]: https://github.com/nodejs/snap
 [Partner Communities]: https://github.com/nodejs/community-committee/blob/HEAD/governance/PARTNER_COMMUNITIES.md
 [Snap]: https://snapcraft.io/node
