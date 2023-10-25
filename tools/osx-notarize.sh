@@ -41,6 +41,7 @@ fi
 # Submit the package for notarization
 # TODO(@ulisesGascon): refactor to use --keychain-profile
 # when https://github.com/nodejs/build/issues/3385#issuecomment-1729281269 is ready
+echo "Submitting node-$pkgid.pkg for notarization..."
 notarization_output=$(
   xcrun notarytool submit \
     --apple-id "$NOTARIZATION_ID" \
@@ -51,12 +52,13 @@ notarization_output=$(
 )
 
 if [ $? -eq 0 ]; then
+  echo $notarization_output
   # Extract the operation ID from the output
   operation_id=$(echo "$notarization_output" | awk '/RequestUUID/ {print $NF}')
-  echo "Notarization submitted. Operation ID: $operation_id"
+  echo "Notarization node-$pkgid.pkg submitted. Operation ID: $operation_id"
   exit 0
 else
-  echo "Notarization failed. Error: $notarization_output"
+  echo "Notarization node-$pkgid.pkg failed. Error: $notarization_output"
   exit 1
 fi
 
